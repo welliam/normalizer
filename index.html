@@ -303,7 +303,37 @@
 
     <div id="resultCard" class="card hidden">
       <h2>Preview</h2>
-      <audio id="preview" controls></audio>
+      <div
+        id="waveform"
+        style="
+          margin-bottom: 16px;
+          min-height: 80px;
+          background: #f8f8f8;
+          border-radius: 4px;
+          padding: 10px;
+        "
+      ></div>
+      <div
+        style="
+          display: flex;
+          gap: 12px;
+          margin-bottom: 16px;
+          align-items: center;
+        "
+      >
+        <button
+          id="playBtn"
+          style="height: 40px; font-size: 16px; min-width: 80px"
+        >
+          Play
+        </button>
+        <button
+          id="stopBtn"
+          style="height: 40px; font-size: 16px; min-width: 80px"
+        >
+          Stop
+        </button>
+      </div>
       <button id="downloadBtn" style="height: 50px; font-size: 18px">
         Download processed audio
       </button>
@@ -327,6 +357,14 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.9.8/dist/ffmpeg.min.js"></script>
+    <script type="module">
+      import WaveSurfer from "https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js";
+      import RegionsPlugin from "https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/regions.esm.js";
+
+      // Make WaveSurfer and RegionsPlugin globally available
+      window.WaveSurfer = WaveSurfer;
+      window.RegionsPlugin = RegionsPlugin;
+    </script>
 
     <script>
       const audioFileInput = document.getElementById("audioFile");
@@ -334,13 +372,100 @@
       const highpassFreq = document.getElementById("highpassFreq");
       const freqValue = document.getElementById("freqValue");
       const resultCard = document.getElementById("resultCard");
-      const previewAudio = document.getElementById("preview");
       const downloadBtn = document.getElementById("downloadBtn");
+      const playBtn = document.getElementById("playBtn");
+      const stopBtn = document.getElementById("stopBtn");
 
       const loadingOverlay = document.getElementById("loadingOverlay");
       const errorOverlay = document.getElementById("errorOverlay");
       const errorMessage = document.getElementById("errorMessage");
       const errorDismissBtn = document.getElementById("errorDismissBtn");
+
+      let wavesurfer;
+      let regionsPlugin;
+
+      function initWaveSurfer() {
+        if (wavesurfer) {
+          wavesurfer.destroy();
+        }
+
+        regionsPlugin = window.RegionsPlugin.create({
+          dragSelection: {
+            slop: 5,
+          },
+        });
+
+        wavesurfer = window.WaveSurfer.create({
+          container: "#waveform",
+          waveColor: "#66cc99",
+          progressColor: "#4a9b73",
+          cursorColor: "#333",
+          barWidth: 2,
+          barRadius: 3,
+          responsive: true,
+          height: 60,
+          normalize: true,
+          plugins: [regionsPlugin],
+        });
+
+        wavesurfer.on("interaction", () => {
+          wavesurfer.play();
+        });
+
+        wavesurfer.on("play", () => {
+          playBtn.textContent = "Pause";
+        });
+
+        wavesurfer.on("pause", () => {
+          playBtn.textContent = "Play";
+        });
+
+        wavesurfer.on("finish", () => {
+          playBtn.textContent = "Play";
+        });
+
+        // Stop and reset to region start when reaching region end
+        wavesurfer.on("timeupdate", (currentTime) => {
+          const regions = regionsPlugin.getRegions();
+          if (regions.length > 0 && wavesurfer.isPlaying()) {
+            const currentRegion = regions[0];
+            if (currentTime >= currentRegion.end) {
+              wavesurfer.pause();
+              wavesurfer.setTime(currentRegion.start);
+              playBtn.textContent = "Play";
+            }
+          }
+        });
+
+        // Handle region creation and ensure only one region exists
+        wavesurfer.on("ready", () => {
+          // Clear any existing regions
+          regionsPlugin.clearRegions();
+
+          // Create a single region spanning the whole track
+          regionsPlugin.addRegion({
+            start: 0,
+            end: wavesurfer.getDuration(),
+            color: "rgba(102, 204, 153, 0.3)",
+          });
+        });
+
+        // Prevent multiple regions by removing old ones when new ones are added
+        regionsPlugin.on("region-created", (region) => {
+          const regions = regionsPlugin.getRegions();
+          if (regions.length > 1) {
+            // Remove all regions except the newest one
+            regions.slice(0, -1).forEach((r) => r.remove());
+          }
+          // Move cursor to the beginning of the new region
+          wavesurfer.setTime(region.start);
+        });
+
+        // When region is updated (moved or resized), move cursor to the beginning
+        regionsPlugin.on("region-updated", (region) => {
+          wavesurfer.setTime(region.start);
+        });
+      }
 
       function showLoading(message = "Loading FFmpeg...") {
         document.querySelector("#loadingOverlay .overlay-message").textContent =
@@ -505,6 +630,26 @@
       processBtn.addEventListener("click", processAudio);
       downloadBtn.addEventListener("click", downloadAudio);
 
+      playBtn.addEventListener("click", () => {
+        if (wavesurfer) {
+          wavesurfer.playPause();
+        }
+      });
+
+      stopBtn.addEventListener("click", () => {
+        if (wavesurfer) {
+          wavesurfer.stop();
+          playBtn.textContent = "Play";
+
+          // Move cursor to the beginning of the current region
+          const regions = regionsPlugin.getRegions();
+          if (regions.length > 0) {
+            // Move to the start of the first (current) region
+            wavesurfer.setTime(regions[0].start);
+          }
+        }
+      });
+
       async function processAudio() {
         if (!ffmpeg) {
           await initFFmpeg();
@@ -559,7 +704,7 @@
             let filterString = "";
 
             const frequency = highpassFreq.value;
-            filterString = `highpass=f=${frequency},loudnorm=I=-16:TP=-1.5:LRA=11`;
+            filterString = `highpass=f=${frequency},loudnorm=I=-16:TP=-1.5:LRA=15`;
 
             ffmpegCommand.push("-af", filterString);
 
@@ -585,7 +730,8 @@
             });
             const url = URL.createObjectURL(blob);
 
-            previewAudio.src = url;
+            initWaveSurfer();
+            wavesurfer.load(url);
 
             hideLoading();
             resultCard.classList.remove("hidden");
@@ -608,27 +754,67 @@
         }
 
         try {
-          const data = ffmpeg.FS("readFile", processedFileName);
-          const blob = new Blob([data.buffer], {
-            type: `audio/${processedFileName.split(".").pop()}`,
-          });
-          const url = URL.createObjectURL(blob);
+          // Get the current region
+          const regions = regionsPlugin.getRegions();
+          if (regions.length === 0) {
+            showError("No region selected for export.");
+            return;
+          }
 
-          const a = document.createElement("a");
-          a.href = url;
+          const region = regions[0];
+          const startTime = region.start;
+          const endTime = region.end;
+          const duration = endTime - startTime;
 
-          const originalNameWithoutExt = originalFileName.substring(
-            0,
-            originalFileName.lastIndexOf("."),
-          );
-          const extension = processedFileName.split(".").pop();
-          a.download = `${originalNameWithoutExt}_processed.${extension}`;
+          showLoading("Trimming audio to region...");
 
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+          // Create trimmed version using FFmpeg
+          const trimmedFileName = "trimmed_" + processedFileName;
+
+          // Use FFmpeg to trim the processed audio
+          ffmpeg
+            .run(
+              "-i",
+              processedFileName,
+              "-ss",
+              startTime.toString(),
+              "-t",
+              duration.toString(),
+              "-c",
+              "copy",
+              trimmedFileName,
+            )
+            .then(() => {
+              const data = ffmpeg.FS("readFile", trimmedFileName);
+              const blob = new Blob([data.buffer], {
+                type: `audio/${trimmedFileName.split(".").pop()}`,
+              });
+              const url = URL.createObjectURL(blob);
+
+              const a = document.createElement("a");
+              a.href = url;
+
+              const originalNameWithoutExt = originalFileName.substring(
+                0,
+                originalFileName.lastIndexOf("."),
+              );
+              const extension = trimmedFileName.split(".").pop();
+              a.download = `${originalNameWithoutExt}_processed.${extension}`;
+
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+
+              hideLoading();
+            })
+            .catch((error) => {
+              console.error("Trimming error:", error);
+              hideLoading();
+              showError("Error trimming audio: " + error.message);
+            });
         } catch (error) {
           console.error("Download error:", error);
+          hideLoading();
           showError("Error downloading processed audio: " + error.message);
         }
       }
