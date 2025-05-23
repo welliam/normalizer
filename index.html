@@ -258,6 +258,28 @@
         cursor: pointer;
         font-size: 16px;
       }
+
+      #playBtn,
+      #stopBtn {
+        background: #aaa;
+        color: white;
+      }
+
+      #playBtn:disabled,
+      #stopBtn:disabled {
+        background: #cccccc;
+        cursor: not-allowed;
+      }
+
+      #resetTrimBtn {
+        background: #999;
+        color: white;
+      }
+
+      #resetTrimBtn:disabled {
+        background: #cccccc;
+        cursor: not-allowed;
+      }
     </style>
   </head>
   <body>
@@ -333,6 +355,30 @@
         >
           Stop
         </button>
+        <button
+          id="resetTrimBtn"
+          style="height: 40px; font-size: 16px; min-width: 100px"
+        >
+          Reset trim
+        </button>
+      </div>
+
+      <div class="controls" style="margin-top: 16px">
+        <label for="outputFilename" style="margin-bottom: 10px; display: block">
+          Filename:
+        </label>
+        <input
+          type="text"
+          id="outputFilename"
+          style="
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+          "
+          placeholder="Enter filename..."
+        />
       </div>
       <button id="downloadBtn" style="height: 50px; font-size: 18px">
         Download processed audio
@@ -375,6 +421,8 @@
       const downloadBtn = document.getElementById("downloadBtn");
       const playBtn = document.getElementById("playBtn");
       const stopBtn = document.getElementById("stopBtn");
+      const resetTrimBtn = document.getElementById("resetTrimBtn");
+      const outputFilename = document.getElementById("outputFilename");
 
       const loadingOverlay = document.getElementById("loadingOverlay");
       const errorOverlay = document.getElementById("errorOverlay");
@@ -595,6 +643,13 @@
           const fileExtension = originalFileName.split(".").pop().toLowerCase();
           const fileMimeType = audioFile.type;
 
+          // Set the output filename to original name + "_processed"
+          const originalNameWithoutExt = originalFileName.substring(
+            0,
+            originalFileName.lastIndexOf("."),
+          );
+          outputFilename.value = `${originalNameWithoutExt}_processed`;
+
           const isAudioType = acceptedAudioMimeTypes.includes(fileMimeType);
           const isVideoType = acceptedVideoMimeTypes.includes(fileMimeType);
 
@@ -647,6 +702,23 @@
             // Move to the start of the first (current) region
             wavesurfer.setTime(regions[0].start);
           }
+        }
+      });
+
+      resetTrimBtn.addEventListener("click", () => {
+        if (wavesurfer && regionsPlugin) {
+          // Clear existing regions
+          regionsPlugin.clearRegions();
+
+          // Create a new region spanning the whole track
+          regionsPlugin.addRegion({
+            start: 0,
+            end: wavesurfer.getDuration(),
+            color: "rgba(102, 204, 153, 0.3)",
+          });
+
+          // Move cursor to the beginning
+          wavesurfer.setTime(0);
         }
       });
 
@@ -794,12 +866,8 @@
               const a = document.createElement("a");
               a.href = url;
 
-              const originalNameWithoutExt = originalFileName.substring(
-                0,
-                originalFileName.lastIndexOf("."),
-              );
               const extension = trimmedFileName.split(".").pop();
-              a.download = `${originalNameWithoutExt}_processed.${extension}`;
+              a.download = `${outputFilename.value}.${extension}`;
 
               document.body.appendChild(a);
               a.click();
